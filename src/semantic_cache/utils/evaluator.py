@@ -3,16 +3,72 @@ Evaluation utilities for semantic cache.
 
 This module provides tools for evaluating cache performance, tuning thresholds,
 and measuring the effectiveness of semantic caching.
+
+Refactored to use the new layered architecture.
 """
 
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import numpy as np
 
-from semantic_cache.cache import SemanticCache
-from semantic_cache.models import PerformanceMetrics
+from semantic_cache.services import CacheService
+
+
+@dataclass
+class PerformanceMetrics:
+    """Performance metrics for cache operations."""
+
+    total_queries: int = 0
+    cache_hits: int = 0
+    cache_misses: int = 0
+    total_lookup_time_ms: float = 0.0
+    llm_calls: int = 0
+    total_llm_time_ms: float = 0.0
+
+    @property
+    def hit_rate(self) -> float:
+        """Calculate cache hit rate."""
+        if self.total_queries == 0:
+            return 0.0
+        return self.cache_hits / self.total_queries
+
+    @property
+    def avg_lookup_time_ms(self) -> float:
+        """Calculate average lookup time."""
+        if self.total_queries == 0:
+            return 0.0
+        return self.total_lookup_time_ms / self.total_queries
+
+    def record_hit(self, lookup_time_ms: float) -> None:
+        """Record a cache hit."""
+        self.total_queries += 1
+        self.cache_hits += 1
+        self.total_lookup_time_ms += lookup_time_ms
+
+    def record_miss(self, lookup_time_ms: float) -> None:
+        """Record a cache miss."""
+        self.total_queries += 1
+        self.cache_misses += 1
+        self.total_lookup_time_ms += lookup_time_ms
+
+    def record_llm_call(self, llm_time_ms: float) -> None:
+        """Record an LLM API call."""
+        self.llm_calls += 1
+        self.total_llm_time_ms += llm_time_ms
+
+    def to_dict(self) -> dict[str, float | int]:
+        """Convert to dictionary."""
+        return {
+            "total_queries": self.total_queries,
+            "cache_hits": self.cache_hits,
+            "cache_misses": self.cache_misses,
+            "hit_rate": self.hit_rate,
+            "avg_lookup_time_ms": self.avg_lookup_time_ms,
+            "llm_calls": self.llm_calls,
+            "total_llm_time_ms": self.total_llm_time_ms,
+        }
 
 
 @dataclass
@@ -90,16 +146,16 @@ class CacheEvaluator:
 
     def __init__(
         self,
-        cache: SemanticCache,
+        cache_service: CacheService,
     ) -> None:
         """
         Initialize the evaluator.
 
         Args:
-            cache: The SemanticCache instance to evaluate.
+            cache_service: The CacheService instance to evaluate.
         """
-        self.cache = cache
-        self.results: list[EvalResult] = []
+        self.cache = cache_service
+        self.results: list[EvalResult] = field(default_factory=list)
 
     def evaluate_threshold(
         self,
@@ -122,20 +178,20 @@ class CacheEvaluator:
         # Store the cached queries first
         for pair in test_queries:
             self.cache.store(
-                pair.cached_query,
-                f"Response for: {pair.cached_query}",
+                prompt=pair.cached_query,
+                response=f"Response for: {pair.cached_query}",
             )
 
         # Test each query
         for pair in test_queries:
             start_time = time.time()
-            cache_result = self.cache.check(pair.query, distance_threshold=threshold)
+            match = self.cache.check(pair.query, threshold=threshold)
             lookup_time_ms = (time.time() - start_time) * 1000
             total_lookup_time += lookup_time_ms
 
             result.total_queries += 1
 
-            if cache_result.is_hit:
+            if match is not None:
                 result.cache_hits += 1
                 # Check if this is a true positive (should match and did)
                 if pair.should_match:

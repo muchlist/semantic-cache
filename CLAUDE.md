@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 This is a semantic caching web service that uses Redis vector search (HNSW index) and sentence-transformers for multilingual (Indonesian/English) intelligent caching. Instead of exact-match caching, it finds semantically similar queries using vector embeddings.
 
-### Architecture
+### High-Level Architecture
 
 ```
 Client → FastAPI Service → Redis Stack (Vector DB)
@@ -63,25 +63,145 @@ make deps           # Update dependencies
 
 ## Code Architecture
 
-### Core Modules (`src/semantic_cache/`)
+### Layered Architecture
 
-- **`config.py`**: Settings via frozen dataclass, loads from `.env`, provides `get_redis_client()` and global `settings` instance
-- **`embeddings.py`**: `EmbeddingService` class wrapping sentence-transformers with lazy model loading and batch encoding support
-- **`models.py`**: Dataclasses (`CacheMatch`, `CacheResult`, `PerformanceMetrics`) and Pydantic models (`CacheEntry`, `CacheStats`)
-- **`cache.py`**: `SemanticCache` class - core implementation using `redisvl.SearchIndex` and `VectorQuery` for HNSW vector search
-- **`evaluator.py`**: `CacheEvaluator` for threshold tuning and performance evaluation, `SimplePerfEval` for cost tracking
-- **`api/app.py`**: FastAPI application with global `SemanticCache` singleton and `PerformanceMetrics` tracker
+The project follows a clean layered architecture with clear separation of concerns:
+
+```
+┌──────────────────────────────────────────┐
+│         API Layer (HTTP Routes)          │  api/app.py
+├──────────────────────────────────────────┤
+│       Handler Layer (HTTP Logic)         │  handlers/cache_handler.py
+├──────────────────────────────────────────┤
+│    Service Layer (Business Logic)        │  services/cache_service.py
+├──────────────────────────────────────────┤
+│   Protocol Layer (Interface Contracts)   │  protocols/
+├──────────────────────────────────────────┤
+│  Repository Layer (Data Access)          │  repositories/
+├──────────────────────────────────────────┤
+│  Domain Layer (Entities, DTOs & Models)  │  entities/, dto/, models/
+└──────────────────────────────────────────┘
+```
+
+**Data Flow:** HTTP Request → Handler → Service → Repository → Redis/Embeddings
+
+### Directory Structure
+
+```
+src/semantic_cache/
+├── __init__.py
+├── config.py                    # Settings (frozen dataclass), env loading
+├── api/
+│   ├── app.py                   # FastAPI routes
+│   └── dependencies.py          # DI container, lifespan manager
+├── dto/                         # Data Transfer Objects (API contracts)
+│   ├── requests.py              # Pydantic request models
+│   └── responses.py             # Pydantic response models
+├── entities/                    # Domain entities (frozen dataclasses)
+│   ├── cache_entry.py           # CacheEntryEntity
+│   └── cache_match.py           # CacheMatchEntity
+├── models/                      # Database models / external API contracts
+│   └── *.py                     # DB schemas, third-party API models
+├── protocols/                   # Interface contracts (structural typing)
+│   ├── cache_store.py           # CacheStore protocol
+│   └── embedding_provider.py    # EmbeddingProvider protocol
+├── repositories/                # Data access implementations
+│   ├── redis_repository.py      # RedisCacheRepository
+│   └── local_embedding_provider.py  # LocalEmbeddingProvider
+├── services/
+│   └── cache_service.py         # CacheService (business logic)
+├── handlers/
+│   └── cache_handler.py         # CacheHandler (HTTP concerns)
+└── utils/
+    └── evaluator.py             # Performance evaluation utilities
+```
 
 ### Key Design Patterns
 
-1. **Global singleton cache**: `get_cache()` in `api/app.py` creates/returns global `SemanticCache` instance
-2. **Lazy model loading**: `EmbeddingService.model` property loads sentence-transformer on first use
-3. **Redis index auto-creation**: `SemanticCache._ensure_index()` creates HNSW index if missing, connects if exists
-4. **Cosine distance matching**: Lower distance = more similar (0 = identical, 2 = opposite). Threshold default is 0.15
+#### 1. Protocol-Based Design (Structural Typing)
+Services depend on protocols, not concrete implementations. Allows swapping Redis for PostgreSQL/Qdrant without changing service code.
+
+```python
+class CacheStore(Protocol):
+    def store(...): ...
+    def find_by_vector(...): ...
+
+class CacheService:
+    def __init__(self, repository: CacheStore, ...):  # Protocol, not Redis type
+```
+
+#### 2. Factory Methods
+Classes use `create()` class methods for construction with sensible defaults:
+- `CacheService.create(repository, embedding_provider, ...)`
+- `RedisCacheRepository.create(embedding_provider, redis_url, ...)`
+- `LocalEmbeddingProvider.create(model_name)`
+
+#### 3. Dependency Injection via app.state
+Lifespan context manager initializes services and stores them in `app.state`:
+
+```python
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    app.state.cache_service = CacheService.create(...)
+    yield
+    # cleanup
+```
+
+#### 4. Entity, DTO & Model Separation
+- **Entities** (frozen dataclasses): Internal domain logic, immutable, no Pydantic
+- **DTOs** (Pydantic models): Your API request/response contracts
+- **Models**: Database models or external API contracts (third-party APIs)
+
+Entities can have methods and properties:
+```python
+@dataclass(frozen=True)
+class CacheMatchEntity:
+    distance: float
+
+    def is_exact_match(self) -> bool:
+        return self.distance == 0.0
+
+    @property
+    def similarity_score(self) -> float:
+        return 1.0 - (self.distance / 2.0)
+```
+
+#### 5. Lazy Model Loading
+Embedding model loads only when first accessed:
+```python
+@property
+def model(self) -> SentenceTransformer:
+    if self._model is None:
+        self._model = SentenceTransformer(self._model_name)
+    return self._model
+```
+
+### Key Classes
+
+| Class | Layer | Purpose |
+|-------|-------|---------|
+| `CacheHandler` | Handler | HTTP concerns, DTO↔Entity conversion |
+| `CacheService` | Service | Business logic orchestration |
+| `RedisCacheRepository` | Repository | Redis vector storage/search |
+| `LocalEmbeddingProvider` | Repository | Sentence-transformers embeddings |
+| `CacheStore` | Protocol | Interface for cache storage |
+| `EmbeddingProvider` | Protocol | Interface for embedding generation |
+| `CacheEntryEntity` | Entity | Internal cache entry representation |
+| `CacheMatchEntity` | Entity | Internal search result representation |
+
+### API Endpoints
+
+| Method | Endpoint | Request DTO | Response DTO |
+|--------|----------|-------------|--------------|
+| POST | `/cache/check` | `CheckCacheRequest` | `CacheCheckResponse` |
+| POST | `/cache/store` | `StoreCacheRequest` | `CacheStoreResponse` |
+| GET | `/cache/stats` | - | `CacheStatsResponse` |
+| DELETE | `/cache/clear` | - | `dict` |
+| GET | `/health` | - | `dict` |
 
 ### Vector Index Schema
 
-Redis hash with fields: `prompt`, `response`, `prompt_vector` (JSON array), `timestamp`, `metadata`. Index name defaults to "semantic_cache" with prefix pattern `semantic_cache:*`. HNSW algorithm, COSINE metric, 384 dimensions.
+Redis hash with fields: `prompt`, `response`, `prompt_vector` (Float32 bytes), `timestamp`, `metadata` (JSON). Index name defaults to "semantic_cache" with prefix pattern `semantic_cache:*`. HNSW algorithm, COSINE metric, 384 dimensions.
 
 ## Configuration
 
@@ -90,10 +210,12 @@ Key environment variables (`.env`):
 - `CACHE_DISTANCE_THRESHOLD`: Max distance for hit (0-2, default: 0.15)
 - `CACHE_TTL`: Entry TTL in seconds (default: 604800 = 7 days)
 - `EMBEDDING_MODEL`: Model name (default: `paraphrase-multilingual-MiniLM-L12-v2`)
+- `API_HOST` / `API_PORT`: Server binding
+- `CACHE_INDEX_NAME`: Redis index name
 
 ## Testing
 
-Tests in `tests/test_api.py` use FastAPI `TestClient`. Tests may return 500/503 if Redis is not running. Run with `make test`.
+Tests use FastAPI `TestClient` with pytest-asyncio. Tests may return 500/503 if Redis is not running. Run with `make test`.
 
 ## Important Notes
 
@@ -103,3 +225,4 @@ Tests in `tests/test_api.py` use FastAPI `TestClient`. Tests may return 500/503 
 - Redis Stack (not plain Redis) required for vector search
 - Multilingual support is core feature (Indonesian/English demo in `scripts/demo.py`)
 - Threshold tuning critical: too low = few hits, too high = false positives
+- Cosine distance: 0 = identical, 2 = opposite. Default threshold is 0.15
