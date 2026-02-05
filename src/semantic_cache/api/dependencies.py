@@ -121,7 +121,9 @@ async def lifespan(app: FastAPI):
 
     yield
 
-    # Cleanup - remove from app.state
+    # Cleanup - close async client and remove from app.state
+    if hasattr(embedding_provider, "close"):
+        await embedding_provider.close()
     del app.state.cache_handler
     del app.state.cache_service
     del app.state.embedding_provider

@@ -67,7 +67,7 @@ class CacheHandler:
             start_time = time.time()
 
             # Delegate to service layer - get multiple matches
-            matches = self._cache.check_all(
+            matches = await self._cache.check_all(
                 prompt=request.prompt,
                 threshold=request.threshold,
                 limit=5,  # Get up to 5 matches like old implementation
@@ -84,7 +84,8 @@ class CacheHandler:
                         response=match.response,
                         vector_distance=match.distance,
                         cosine_similarity=1.0 - match.distance,  # Convert to similarity
-                        cached_at=match.cached_at,  # From entity, not metadata
+                        cached_at=match.cached_at,
+                        metadata=match.metadata or {},  # Include stored metadata
                     )
                 )
 
@@ -114,7 +115,7 @@ class CacheHandler:
             HTTPException: If an error occurs during storage
         """
         try:
-            key = self._cache.store(
+            key = await self._cache.store(
                 prompt=request.prompt,
                 response=request.response,
                 metadata=request.metadata,
@@ -184,7 +185,7 @@ class CacheHandler:
         Returns:
             Dict with health status
         """
-        is_healthy = self._cache.is_healthy()
+        is_healthy = await self._cache.is_healthy()
 
         return {
             "status": "healthy" if is_healthy else "unhealthy",

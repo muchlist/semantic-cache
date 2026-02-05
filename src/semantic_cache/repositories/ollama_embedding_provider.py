@@ -13,6 +13,7 @@ Key features:
 - Simple HTTP API
 - Automatic model download on first use
 - Local-only, no external API calls
+- Async support for concurrent requests
 
 Models available:
 - embeddinggemma (308M params, 768 dims, 2K context)
@@ -79,7 +80,21 @@ class OllamaEmbeddingProvider:
         self._base_url = base_url or settings.ollama_base_url
         self._timeout = timeout
         self._dimension: int | None = None
-        self._client = httpx.Client(timeout=self._timeout)
+        self._client: httpx.AsyncClient | None = None
+
+    @property
+    def client(self) -> httpx.AsyncClient:
+        """Lazy-load the async HTTP client.
+
+        Returns:
+            The httpx.AsyncClient instance
+        """
+        if self._client is None:
+            self._client = httpx.AsyncClient(
+                timeout=self._timeout,
+                limits=httpx.Limits(max_connections=100, max_keepalive_connections=20),
+            )
+        return self._client
 
     @classmethod
     def create(
@@ -119,16 +134,15 @@ class OllamaEmbeddingProvider:
 
         Note:
             For known models, returns cached dimension.
-            For unknown models, makes an API call to detect dimension.
+            For unknown models, returns 768 as default (will validate on first encode).
         """
         if self._dimension is None:
             # Try known dimensions first
             if self._model_name in self.MODEL_DIMENSIONS:
                 self._dimension = self.MODEL_DIMENSIONS[self._model_name]
             else:
-                # Detect by encoding a sample
-                sample_embedding = self.encode("test")
-                self._dimension = len(sample_embedding)
+                # Default for unknown models (will be validated on first encode)
+                self._dimension = 768
         return self._dimension
 
     @property
@@ -140,7 +154,7 @@ class OllamaEmbeddingProvider:
         """
         return self._model_name
 
-    def encode(self, text: str) -> list[float]:
+    async def encode(self, text: str) -> list[float]:
         """Generate embedding vector for a single text.
 
         Args:
@@ -156,7 +170,7 @@ class OllamaEmbeddingProvider:
         Example:
             ```python
             provider = OllamaEmbeddingProvider.create()
-            embedding = provider.encode("Hello, world!")
+            embedding = await provider.encode("Hello, world!")
             print(len(embedding))  # 768
             ```
         """
@@ -167,7 +181,7 @@ class OllamaEmbeddingProvider:
         }
 
         try:
-            response = self._client.post(url, json=payload)
+            response = await self.client.post(url, json=payload)
             response.raise_for_status()
             data = response.json()
 
@@ -189,53 +203,7 @@ class OllamaEmbeddingProvider:
                 error_msg += f"\n  → Model not found. Try: ollama pull {self._model_name}"
             raise RuntimeError(error_msg) from e
 
-    def encode_batch(self, texts: list[str], batch_size: int = 32) -> list[list[float]]:
-        """Generate embeddings for multiple texts efficiently.
-
-        Args:
-            texts: List of texts to encode
-            batch_size: Batch size for encoding (Ollama handles batching internally)
-
-        Returns:
-            List of embedding vectors
-
-        Example:
-            ```python
-            provider = OllamaEmbeddingProvider.create()
-            embeddings = provider.encode_batch([
-                "First text",
-                "Second text",
-                "Third text"
-            ])
-            print(len(embeddings))  # 3
-            print(len(embeddings[0]))  # 768
-            ```
-        """
-        url = f"{self._base_url}/api/embed"
-        payload = {
-            "model": self._model_name,
-            "input": texts,  # Ollama accepts array of strings
-        }
-
-        try:
-            response = self._client.post(url, json=payload)
-            response.raise_for_status()
-            data = response.json()
-
-            if "embeddings" in data:
-                return data["embeddings"]
-
-            raise ValueError(f"Unexpected response format: {data}")
-
-        except httpx.HTTPError as e:
-            error_msg = f"Ollama API error: {e}"
-            if "connection refused" in str(e).lower():
-                error_msg += "\n  → Is Ollama running? Try: ollama serve"
-            elif "model" in str(e).lower() and "not found" in str(e).lower():
-                error_msg += f"\n  → Model not found. Try: ollama pull {self._model_name}"
-            raise RuntimeError(error_msg) from e
-
-    def is_available(self) -> bool:
+    async def is_available(self) -> bool:
         """Check if the embedding provider is available.
 
         Returns:
@@ -244,7 +212,7 @@ class OllamaEmbeddingProvider:
         Example:
             ```python
             provider = OllamaEmbeddingProvider.create()
-            if provider.is_available():
+            if await provider.is_available():
                 print("Ollama is ready!")
             else:
                 print("Ollama is not available. Run: ollama serve")
@@ -252,12 +220,16 @@ class OllamaEmbeddingProvider:
         """
         try:
             # Try to generate a test embedding
-            _ = self.encode("test")
+            _ = await self.encode("test")
             return True
         except Exception:
             return False
 
-    def __del__(self):
-        """Cleanup: close HTTP client."""
-        if hasattr(self, "_client"):
-            self._client.close()
+    async def close(self) -> None:
+        """Close the async HTTP client.
+
+        Should be called when shutting down the application.
+        """
+        if self._client is not None:
+            await self._client.aclose()
+            self._client = None
