@@ -107,7 +107,8 @@ src/semantic_cache/
 │   └── embedding_provider.py    # EmbeddingProvider protocol
 ├── repositories/                # Data access implementations
 │   ├── redis_repository.py      # RedisCacheRepository
-│   └── local_embedding_provider.py  # LocalEmbeddingProvider
+│   ├── ollama_embedding_provider.py  # OllamaEmbeddingProvider
+│   └── gemma_embedding_provider.py   # GemmaEmbeddingProvider
 ├── services/
 │   └── cache_service.py         # CacheService (business logic)
 ├── handlers/
@@ -134,7 +135,8 @@ class CacheService:
 Classes use `create()` class methods for construction with sensible defaults:
 - `CacheService.create(repository, embedding_provider, ...)`
 - `RedisCacheRepository.create(embedding_provider, redis_url, ...)`
-- `LocalEmbeddingProvider.create(model_name)`
+- `OllamaEmbeddingProvider.create(model_name, base_url)`
+- `GemmaEmbeddingProvider.create(model_name, output_dimension)`
 
 #### 3. Dependency Injection via app.state
 Lifespan context manager initializes services and stores them in `app.state`:
@@ -183,7 +185,8 @@ def model(self) -> SentenceTransformer:
 | `CacheHandler` | Handler | HTTP concerns, DTO↔Entity conversion |
 | `CacheService` | Service | Business logic orchestration |
 | `RedisCacheRepository` | Repository | Redis vector storage/search |
-| `LocalEmbeddingProvider` | Repository | Sentence-transformers embeddings |
+| `OllamaEmbeddingProvider` | Repository | Ollama-served embeddings (default) |
+| `GemmaEmbeddingProvider` | Repository | HuggingFace direct embeddings (advanced) |
 | `CacheStore` | Protocol | Interface for cache storage |
 | `EmbeddingProvider` | Protocol | Interface for embedding generation |
 | `CacheEntryEntity` | Entity | Internal cache entry representation |
@@ -209,9 +212,32 @@ Key environment variables (`.env`):
 - `REDIS_URL`: Redis connection (default: `redis://localhost:6379`)
 - `CACHE_DISTANCE_THRESHOLD`: Max distance for hit (0-2, default: 0.15)
 - `CACHE_TTL`: Entry TTL in seconds (default: 604800 = 7 days)
-- `EMBEDDING_MODEL`: Model name (default: `paraphrase-multilingual-MiniLM-L12-v2`)
+- `EMBEDDING_MODEL`: Model name (supports multiple providers, see below)
+- `EMBEDDING_OUTPUT_DIMENSION`: Output dimension for Gemma (128, 256, 512, or 768)
 - `API_HOST` / `API_PORT`: Server binding
 - `CACHE_INDEX_NAME`: Redis index name
+
+### Embedding Models
+
+Two embedding providers are available:
+
+**OllamaEmbeddingProvider** (Default):
+- Model: `embeddinggemma` (via Ollama)
+- Dimensions: 768 (fixed)
+- Context: 2K tokens
+- Setup: `ollama pull embeddinggemma`
+- Best for: Zero authentication, simple local setup, production-ready
+
+**GemmaEmbeddingProvider** (Advanced):
+- Model: `google/embeddinggemma-300m` (direct via sentence-transformers)
+- Dimensions: 768, 512, 256, or 128 (flexible via Matryoshka)
+- Context: 2K tokens
+- Setup: Requires HuggingFace authentication (gated model)
+- Best for: Dimension flexibility, Matryoshka compression for storage optimization
+
+**Switching providers**: Edit `src/semantic_cache/api/dependencies.py` and comment/uncomment the desired provider.
+
+**📖 Full comparison and migration guide**: See [docs/MODELS.md](docs/MODELS.md)
 
 ## Testing
 

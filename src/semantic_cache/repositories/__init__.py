@@ -12,7 +12,8 @@ Any class implementing the required methods will satisfy the protocol.
 
 from semantic_cache.protocols import CacheStore, EmbeddingProvider
 
-from .local_embedding_provider import LocalEmbeddingProvider
+from .gemma_embedding_provider import GemmaEmbeddingProvider
+from .ollama_embedding_provider import OllamaEmbeddingProvider
 from .redis_repository import RedisCacheRepository
 
 # Re-export with backward compatible names
@@ -23,5 +24,6 @@ __all__ = [
     "CacheRepository",  # Backward compatible alias
     "EmbeddingProvider",
     "RedisCacheRepository",
-    "LocalEmbeddingProvider",
+    "GemmaEmbeddingProvider",
+    "OllamaEmbeddingProvider",
 ]
