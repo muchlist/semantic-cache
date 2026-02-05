@@ -1,5 +1,7 @@
 """Response DTOs for API endpoints."""
 
+from typing import Any
+
 from pydantic import BaseModel, Field
 
 
@@ -21,6 +23,10 @@ class CacheMatchItem(BaseModel):
         le=1.0,
     )
     cached_at: float = Field(..., description="Timestamp when the entry was cached (Unix timestamp)")
+    metadata: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Optional metadata stored with the cache entry (model, tokens, cost, etc.)",
+    )
 
 
 class CacheCheckResponse(BaseModel):

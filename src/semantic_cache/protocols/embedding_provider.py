@@ -49,7 +49,7 @@ class EmbeddingProvider(Protocol):
         """
         ...
 
-    def encode(self, text: str) -> list[float]:
+    async def encode(self, text: str) -> list[float]:
         """Generate embedding vector for a single text.
 
         Args:
@@ -60,18 +60,7 @@ class EmbeddingProvider(Protocol):
         """
         ...
 
-    def encode_batch(self, texts: list[str]) -> list[list[float]]:
-        """Generate embeddings for multiple texts efficiently.
-
-        Args:
-            texts: List of texts to encode
-
-        Returns:
-            List of embedding vectors
-        """
-        ...
-
-    def is_available(self) -> bool:
+    async def is_available(self) -> bool:
         """Check if the embedding provider is available.
 
         Returns:

@@ -32,7 +32,7 @@ from semantic_cache.handlers import CacheHandler
 
 # New architecture exports
 from semantic_cache.protocols import CacheStore, EmbeddingProvider
-from semantic_cache.repositories import LocalEmbeddingProvider, RedisCacheRepository
+from semantic_cache.repositories import RedisCacheRepository
 from semantic_cache.services import CacheService
 
 __all__ = [

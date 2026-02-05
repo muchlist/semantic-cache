@@ -22,7 +22,15 @@ class Settings:
     cache_index_name: str = os.getenv("CACHE_INDEX_NAME", "semantic_cache")
 
     # Embedding
-    embedding_model: str = os.getenv("EMBEDDING_MODEL", "paraphrase-multilingual-MiniLM-L12-v2")
+    embedding_model: str = os.getenv(
+        "EMBEDDING_MODEL",
+        "paraphrase-multilingual-MiniLM-L12-v2"  # or "google/embeddinggemma-300m" or "embeddinggemma"
+    )
+    # Output dimension (only used for Gemma with Matryoshka): 128, 256, 512, or 768
+    embedding_output_dimension: int = int(os.getenv("EMBEDDING_OUTPUT_DIMENSION", "768"))
+
+    # Ollama
+    ollama_base_url: str = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 
     # API
     api_host: str = os.getenv("API_HOST", "0.0.0.0")
@@ -32,10 +40,25 @@ class Settings:
     # Optional: OpenAI
     openai_api_key: str | None = os.getenv("OPENAI_API_KEY")
 
+    @property
+    def is_gemma_model(self) -> bool:
+        """Check if the configured model is an EmbeddingGemma model.
+
+        Returns:
+            True if model is EmbeddingGemma, False otherwise
+        """
+        return "embeddinggemma" in self.embedding_model.lower()
+
     def __post_init__(self) -> None:
         """Validate settings after initialization."""
         if not 0 <= self.cache_distance_threshold <= 2:
             raise ValueError("CACHE_DISTANCE_THRESHOLD must be between 0 and 2 for cosine distance")
+
+        if self.embedding_output_dimension not in [128, 256, 512, 768]:
+            raise ValueError(
+                f"EMBEDDING_OUTPUT_DIMENSION must be one of [128, 256, 512, 768], "
+                f"got {self.embedding_output_dimension}"
+            )
 
 
 @lru_cache

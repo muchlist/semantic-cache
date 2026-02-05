@@ -104,7 +104,7 @@ class CacheService:
             ttl=ttl,
         )
 
-    def check(
+    async def check(
         self,
         prompt: str,
         threshold: float | None = None,
@@ -127,7 +127,7 @@ class CacheService:
         threshold = threshold or self._threshold
 
         # Generate embedding for the query
-        vector = self._embeddings.encode(prompt)
+        vector = await self._embeddings.encode(prompt)
 
         # Query repository for similar entries
         matches = self._repository.find_by_vector(
@@ -149,7 +149,7 @@ class CacheService:
 
         return None
 
-    def check_all(
+    async def check_all(
         self,
         prompt: str,
         threshold: float | None = None,
@@ -173,7 +173,7 @@ class CacheService:
         threshold = threshold or self._threshold
 
         # Generate embedding for the query
-        vector = self._embeddings.encode(prompt)
+        vector = await self._embeddings.encode(prompt)
 
         # Query repository for similar entries
         matches = self._repository.find_by_vector(
@@ -197,7 +197,7 @@ class CacheService:
 
         return result
 
-    def store(
+    async def store(
         self,
         prompt: str,
         response: str,
@@ -219,7 +219,7 @@ class CacheService:
             The storage key for the entry
         """
         # Generate embedding for the prompt
-        vector = self._embeddings.encode(prompt)
+        vector = await self._embeddings.encode(prompt)
 
         # Store via repository
         key = self._repository.store(
@@ -274,13 +274,15 @@ class CacheService:
         stats["embedding_dimension"] = self._embeddings.dimension
         return stats
 
-    def is_healthy(self) -> bool:
+    async def is_healthy(self) -> bool:
         """Check if cache is healthy.
 
         Returns:
             True if both repository and embeddings are healthy
         """
-        return self._repository.health_check() and self._embeddings.is_available()
+        repo_healthy = self._repository.health_check()
+        embeddings_healthy = await self._embeddings.is_available()
+        return repo_healthy and embeddings_healthy
 
     def set_threshold(self, threshold: float) -> None:
         """Update the similarity threshold.
