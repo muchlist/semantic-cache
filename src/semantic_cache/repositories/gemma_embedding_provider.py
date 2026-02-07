@@ -16,6 +16,7 @@ Requires:
     pip install git+https://github.com/huggingface/transformers@v4.56.0-Embedding-Gemma-preview
 """
 
+import asyncio
 import time
 
 import numpy as np
@@ -156,7 +157,7 @@ class GemmaEmbeddingProvider:
             return embedding
         return embedding[..., : self._output_dimension]
 
-    def encode(self, text: str) -> list[float]:
+    async def encode(self, text: str) -> list[float]:
         """Generate embedding vector for a single text.
 
         Args:
@@ -168,11 +169,13 @@ class GemmaEmbeddingProvider:
         Example:
             ```python
             provider = GemmaEmbeddingProvider.create()
-            embedding = provider.encode("Hello, world!")
+            embedding = await provider.encode("Hello, world!")
             print(len(embedding))  # 768 or configured dimension
             ```
         """
-        embedding = self.model.encode(
+        # Run CPU-bound encoding in thread pool to avoid blocking event loop
+        embedding = await asyncio.to_thread(
+            self.model.encode,
             text,
             show_progress_bar=False,
             normalize_embeddings=True,
@@ -185,42 +188,10 @@ class GemmaEmbeddingProvider:
                 return truncated.tolist()
             truncated = self._truncate_embedding(embedding[0])
             return truncated.tolist()
-        return list(embedding)
+        # Fallback for unexpected return types
+        return [float(x) for x in list(embedding)]
 
-    def encode_batch(self, texts: list[str], batch_size: int = 32) -> list[list[float]]:
-        """Generate embeddings for multiple texts efficiently.
-
-        Args:
-            texts: List of texts to encode
-            batch_size: Batch size for encoding
-
-        Returns:
-            List of embedding vectors
-
-        Example:
-            ```python
-            provider = GemmaEmbeddingProvider.create()
-            embeddings = provider.encode_batch([
-                "First text",
-                "Second text",
-                "Third text"
-            ])
-            print(len(embeddings))  # 3
-            print(len(embeddings[0]))  # 768 or configured dimension
-            ```
-        """
-        embeddings = self.model.encode(
-            texts,
-            batch_size=batch_size,
-            show_progress_bar=False,
-            normalize_embeddings=True,
-        )
-
-        # Truncate all embeddings
-        truncated = self._truncate_embedding(embeddings)
-        return truncated.tolist()
-
-    def is_available(self) -> bool:
+    async def is_available(self) -> bool:
         """Check if the embedding provider is available.
 
         Returns:
@@ -229,7 +200,7 @@ class GemmaEmbeddingProvider:
         Example:
             ```python
             provider = GemmaEmbeddingProvider.create()
-            if provider.is_available():
+            if await provider.is_available():
                 print("EmbeddingGemma is ready!")
             ```
         """

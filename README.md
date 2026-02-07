@@ -106,6 +106,8 @@ make demo
 ## API Endpoints
 
 ### Check Cache
+![Cache Check Endpoint](docs/img/cache-check.png)
+
 ```bash
 curl -X POST http://localhost:8000/cache/check \
   -H "Content-Type: application/json" \
@@ -113,6 +115,8 @@ curl -X POST http://localhost:8000/cache/check \
 ```
 
 ### Store in Cache
+![Cache Store Endpoint](docs/img/cache-store.png)
+
 ```bash
 curl -X POST http://localhost:8000/cache/store \
   -H "Content-Type: application/json" \
